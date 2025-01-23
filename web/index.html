@@ -270,7 +270,7 @@
                         :class="item[1] == 'failed' ? 'bg-red-400' : 'bg-green-400'"
                         class="bars flex-1 h-10 rounded hover:opacity-80 cursor-pointer"
                         x-bind:title="'cause: ' + item[4]"
-                        x-on:click="window.open('https://gitlab.parity.io/parity/mirrors/polkadot-sdk/-/jobs/' + item[4])"
+                        x-on:click="window.open('https://gitlab.parity.io/parity/mirrors/polkadot-sdk/-/jobs/' + item[0])"
                         ></div>
                         </template>
                       </div>
