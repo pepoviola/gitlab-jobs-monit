@@ -1,3 +1,5 @@
+#![allow(clippy::needless_return)]
+
 use csv::WriterBuilder;
 use log::warn;
 use log::{debug, info, trace};
@@ -29,6 +31,7 @@ enum StoreProvider {
 
 #[derive(Debug, Serialize,Deserialize, Clone)]
 enum Fixes {
+    #[allow(clippy::upper_case_acronyms)]
     #[serde(rename = "AlreadyFixedNeedsRebase_PJS")]
     PJS,
     #[serde(rename = "AlreadyFixedNeedsRebase_Deleting")]
@@ -120,7 +123,7 @@ pub trait Store {
     fn append(&mut self, job: Vec<Job>) -> Result<(), anyhow::Error>;
     fn save(&self) -> Result<(), anyhow::Error>;
 }
-
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug)]
 struct CSV {
     jobs: Vec<Job>,
@@ -134,6 +137,7 @@ impl CSV {
     // open store
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&file_path)?;
@@ -152,12 +156,11 @@ impl CSV {
 
 impl Store for CSV {
     fn last_id(&self) -> u32 {
-        let last_job_id = if let Some(job) = self.stored_jobs.first() {
+        if let Some(job) = self.stored_jobs.first() {
             job.id
         } else {
             0
-        };
-        last_job_id
+        }
     }
 
     fn append(&mut self,  mut jobs: Vec<Job>) -> Result<(), anyhow::Error> {
@@ -168,6 +171,7 @@ impl Store for CSV {
     fn save(&self) -> Result<(), anyhow::Error> {
         let file = OpenOptions::new()
         .create(true)
+        .truncate(true)
         .write(true)
         .open(&self.file)?;
 
@@ -199,7 +203,8 @@ impl Db {
     fn new(file: &str) -> Result<Self, anyhow::Error> {
         let file_path: PathBuf = file.into();
         // open store
-        let connection = sqlite::open(&file_path).expect(&format!("can't open file {:?}", file_path));
+        let err_msg = format!("can't open file {:?}", file_path);
+        let connection = sqlite::open(&file_path).expect(&err_msg);
         // create scheme IFF not exist
         connection.execute(SCHEMA_DB)?;
         Ok(Self { file: file_path, conn: connection })
@@ -209,14 +214,12 @@ impl Db {
 impl Store for Db {
     fn last_id(&self) -> u32 {
         let mut statement = self.conn.prepare("SELECT MAX(id) from jobs").expect("Select last id statement should be ok. qed");
-        let last_job_id = if let Ok(sqlite::State::Row)  = statement.next() {
-            let id = statement.read::<i64, _>(0).unwrap_or_else(|_| 0);
-            id.try_into().unwrap_or_else(|_| 0)
+        if let Ok(sqlite::State::Row)  = statement.next() {
+            let id = statement.read::<i64, _>(0).unwrap_or(0);
+            id.try_into().unwrap_or(0)
         } else {
             0
-        };
-
-        last_job_id
+        }
     }
 
     fn append(&mut self,  jobs: Vec<Job>) -> Result<(), anyhow::Error> {
@@ -321,7 +324,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut store = get_store(args.store, &jobs_file)?;
 
     let base_url = env::var("ZOMBIE_JOBS_BASE_URL").unwrap_or_else(|_| String::from(BASE_URL));
-    let max_mages: u32 = env::var("ZOMBIE_JOBS_MAX_PAGES").unwrap_or_else(|_| MAX_PAGES.to_string()).parse().unwrap_or_else(|_| MAX_PAGES);
+    let max_mages: u32 = env::var("ZOMBIE_JOBS_MAX_PAGES").unwrap_or_else(|_| MAX_PAGES.to_string()).parse().unwrap_or(MAX_PAGES);
     let token = env::var("ZOMBIE_JOBS_TOKEN").ok();
     // from where we look jobs, format should be "%Y-%m-%dTHH:MM:ssZ"
     let base_date = env::var("ZOMBIE_JOBS_BASE_DATE");
@@ -343,7 +346,7 @@ async fn main() -> Result<(), anyhow::Error> {
         let page = fetch_page(
             &base_url,
             token.clone(),
-            &vec!["failed", "success"],
+            &["failed", "success"],
             page_num,
             &client
         ).await?;
@@ -422,6 +425,7 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     store.save()?;
+
     Ok(())
 }
 
@@ -477,12 +481,10 @@ async fn analyze_job<'a>(job: &'a mut Job, client: &reqwest::Client, re: &Regex)
             } else if log.contains(ZOMBIE_TEST_FAIL) {
                 // assertion fails
                 job.checked_cause = Cause::Assertion;
-            } else {
-                if log.contains(ZOMBIE_DELETING) {
+            } else if log.contains(ZOMBIE_DELETING) {
                     // error deleting network, should be already fixed
                     // job.checked_cause = Cause::AlreadyFixedNeedsRebase("Already fixed. Deleting".into());
                     job.checked_cause = Cause::AlreadyFixedNeedsRebase(Fixes::Deleting);
-                }
             }
         } else {
             // but not get the deployed message
@@ -516,7 +518,7 @@ async fn fetch_page<T: AsRef<str>>(
         .iter()
         .map(|scope| format!("scope[]={}", scope.as_ref()))
         .collect();
-    parts.extend_from_slice(&vec![format!("page={page}"), String::from("per_page=100")]);
+    parts.extend_from_slice(&[format!("page={page}"), String::from("per_page=100")]);
 
     let url = format!("{}?{}", base_url, parts.join("&"));
     debug!("url: {url}");

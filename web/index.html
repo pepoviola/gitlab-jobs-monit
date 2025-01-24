@@ -37,7 +37,7 @@
         for(const test of test_names[0].values) {
             const test_name = test[0];
             if(filter && !test_name.includes(filter)) continue;
-            const jobs = db.exec(`SELECT id, status, created_at, failure_reason, checked_cause from jobs where name = "${test_name}" order by id desc LIMIT ${count}`);
+            const jobs = db.exec(`SELECT id, status, created_at, failure_reason, checked_cause from jobs where name = "${test_name}" order by id asc LIMIT ${count}`);
             report[test_name] = {
                 items: jobs[0].values,
                 stats: stats(jobs[0].values)
@@ -52,8 +52,8 @@
         return {
             label: p > 90 ? 'Operational' : p > 50 ? 'Degraded Performance' : 'Major Outage',
             style_class: p > 90 ? 'green' : p > 50 ? 'yellow' : 'red',
-            end_date: tests[0][2],
-            first_date: tests[tests.length-1][2],
+            first_date: tests[0][2],
+            end_date: tests[tests.length-1][2],
             percentage: p + '%'
         }
     }
