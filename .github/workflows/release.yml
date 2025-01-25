@@ -6,7 +6,11 @@ on:
       - 'v*'
 
 jobs:
+  preflight:
+    uses: ./.github/workflows/ci.yml # ensure ci is green
+
   build_release_for_linux:
+    needs: [preflight]
     name: build_release_for_linux
     runs-on: ubuntu-latest
     outputs:
@@ -40,4 +44,4 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: false
           files: |
-            ./target/release/gitlab-jobs-monit/
+            ./target/release/gitlab-jobs-monit
