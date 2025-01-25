@@ -308,19 +308,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let args = Args::parse();
     debug!("Args: {args:?}");
-    // println!("{:?}", Args::parse());
 
     let jobs_file =
         env::var("ZOMBIE_JOBS_FILE").unwrap_or_else(|_| String::from("zombie_jobs.csv"));
 
-    // let mut store: Box<impl Store> = if StoreProvider::Db = args.store {
-    //     Box::new(Db::new(&jobs_file)?)
-    // } else {
-    //     Box::new(CSV::new(&jobs_file)?)
-    // };
-
-    // let mut store = CSV::new(&jobs_file)?;
-    // let mut store = Db::new(&jobs_file)?;
     let mut store = get_store(args.store, &jobs_file)?;
 
     let base_url = env::var("ZOMBIE_JOBS_BASE_URL").unwrap_or_else(|_| String::from(BASE_URL));
@@ -409,7 +400,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
         }
 
-        // jobs.append(&mut zombienet_jobs);
         store.append(zombienet_jobs)?;
 
         next_page = if page_num >  max_mages || reach_last_job_stored {
@@ -418,9 +408,8 @@ async fn main() -> Result<(), anyhow::Error> {
             page.next_page
         };
         debug!(
-            "fetching next page {:?}",//  accumulator len: {}",
+            "fetching next page {:?}",
             next_page,
-            // jobs.len()
         );
     }
 
