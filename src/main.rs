@@ -519,6 +519,9 @@ async fn fetch_page<T: AsRef<str>>(
     };
 
     let res = req.send().await?;
+    if !res.status().is_success() {
+        return Err(anyhow::anyhow!("Error fetching page {}, status {}", page, res.status()));
+    }
 
     let headers = res.headers();
     let next_page = if let Some(next_page) = headers.get("x-next-page") {
