@@ -30,6 +30,12 @@ enum StoreProvider {
 }
 
 #[derive(Debug, Serialize,Deserialize, Clone)]
+enum Platform {
+    Gitlab,
+    Github
+}
+
+#[derive(Debug, Serialize,Deserialize, Clone)]
 enum Fixes {
     #[allow(clippy::upper_case_acronyms)]
     #[serde(rename = "AlreadyFixedNeedsRebase_PJS")]
@@ -77,6 +83,8 @@ impl std::fmt::Display for Cause {
 
 const SCHEMA_DB: &str = "CREATE TABLE IF NOT EXISTS jobs ( \
     id INTEGER PRIMARY KEY, \
+    gl_job_id INTEGER UNIQUE, \
+    gh_job_id INTEGER UNIQUE, \
     status TEXT NOT NULL, \
     stage TEXT NOT NULL, \
     name TEXT NOT NULL, \
@@ -91,8 +99,6 @@ const SCHEMA_DB: &str = "CREATE TABLE IF NOT EXISTS jobs ( \
     zombie_version TEXT
     );
 ";
-
-
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Job {
@@ -114,13 +120,13 @@ pub struct Job {
     zombie_version: Option<String>
 }
 
-const BASE_URL: &str = "https://gitlab.parity.io/api/v4/projects/674/jobs";
+const GITLAB_BASE_URL: &str = "https://gitlab.parity.io/api/v4/projects/674/jobs";
 const MAX_PAGES: u32 = 1000; // 1000 pages max
 
-pub trait Store {
+trait Store {
     // fn open(file: &str) -> Result<(), anyhow::Error>;
-    fn last_id(&self) -> u32;
-    fn append(&mut self, job: Vec<Job>) -> Result<(), anyhow::Error>;
+    fn last_id(&self, platform: Platform) -> u32;
+    fn append(&mut self, job: Vec<Job>, platform: Platform) -> Result<(), anyhow::Error>;
     fn save(&self) -> Result<(), anyhow::Error>;
 }
 #[allow(clippy::upper_case_acronyms)]
@@ -155,7 +161,7 @@ impl CSV {
 }
 
 impl Store for CSV {
-    fn last_id(&self) -> u32 {
+    fn last_id(&self, _platform: Platform) -> u32 {
         if let Some(job) = self.stored_jobs.first() {
             job.id
         } else {
@@ -163,7 +169,7 @@ impl Store for CSV {
         }
     }
 
-    fn append(&mut self,  mut jobs: Vec<Job>) -> Result<(), anyhow::Error> {
+    fn append(&mut self,  mut jobs: Vec<Job>, _platform: Platform) -> Result<(), anyhow::Error> {
         self.jobs.append(&mut jobs);
         Ok(())
     }
@@ -212,8 +218,12 @@ impl Db {
 }
 
 impl Store for Db {
-    fn last_id(&self) -> u32 {
-        let mut statement = self.conn.prepare("SELECT MAX(id) from jobs").expect("Select last id statement should be ok. qed");
+    fn last_id(&self, platform: Platform) -> u32 {
+        let id_field = match platform {
+            Platform::Gitlab => "gl_job_id",
+            Platform::Github => "gh_job_id"
+        };
+        let mut statement = self.conn.prepare(format!("SELECT MAX({id_field}) from jobs")).expect("Select last id statement should be ok. qed");
         if let Ok(sqlite::State::Row)  = statement.next() {
             let id = statement.read::<i64, _>(0).unwrap_or(0);
             id.try_into().unwrap_or(0)
@@ -222,8 +232,11 @@ impl Store for Db {
         }
     }
 
-    fn append(&mut self,  jobs: Vec<Job>) -> Result<(), anyhow::Error> {
-        let query = "INSERT into jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
+    fn append(&mut self,  jobs: Vec<Job>, platform: Platform) -> Result<(), anyhow::Error> {
+        let query = "INSERT into jobs \
+            (gl_job_id, gh_job_id, status, stage, name, ref_str, duration, queue_duration, created_at, finished_at, failure_reason, web_url, checked_cause, zombie_version) \
+            VALUES \
+            (?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
         for job in jobs {
             let duration = if let Some(d) = job.duration {
@@ -256,29 +269,40 @@ impl Store for Db {
                 Null
             };
 
+            let (gl_job_id, gh_job_id) = match platform {
+                Platform::Gitlab => {
+                    (Integer(job.id as i64), Null)
+                }
+                Platform::Github => {
+                    (Null, Integer(job.id as i64))
+                },
+            };
             trace!("job id: {}", job.id);
             let mut statement = self.conn.prepare(query).unwrap();
             statement.bind( &[
-                (1, Integer(job.id as i64)),
-                (2, sqlString(job.status)),
-                (3, sqlString(job.stage)),
-                (4, sqlString(job.name)),
-                (5, sqlString(job.ref_str)),
-                (6, duration),
-                (7, queued_duration),
-                (8, sqlString(job.created_at)),
-                (9,finished_at),
-                (10, failure_reason),
-                (11, sqlString(job.web_url)),
-                (12, sqlString(job.checked_cause.to_string())),
-                (13, zombie_version),
+                (1, gl_job_id),
+                (2, gh_job_id),
+                (3, sqlString(job.status)),
+                (4, sqlString(job.stage)),
+                (5, sqlString(job.name)),
+                (6, sqlString(job.ref_str)),
+                (7, duration),
+                (8, queued_duration),
+                (9, sqlString(job.created_at)),
+                (10,finished_at),
+                (11, failure_reason),
+                (12, sqlString(job.web_url)),
+                (13, sqlString(job.checked_cause.to_string())),
+                (14, zombie_version),
                 ][..]
             ).expect("Bind should works. qed");
 
 
             if let Err(e) = statement.next() {
-                if let Some("UNIQUE constraint failed: jobs.id") = e.message.as_deref() {
-                    warn!("WARN: duplicated job id {}, skipping. Err in insert {:?}", job.id, e);
+                if let Some("UNIQUE constraint failed: jobs.gl_job_id") = e.message.as_deref() {
+                    warn!("WARN: duplicated job id (gl_job_id) {}, skipping. Err in insert {:?}", job.id, e);
+                } else if let Some("UNIQUE constraint failed: jobs.gh_job_id") = e.message.as_deref() {
+                    warn!("WARN: duplicated job id (gh_job_id) {}, skipping. Err in insert {:?}", job.id, e);
                 } else {
                     return Err(e.into());
                 }
@@ -314,7 +338,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let mut store = get_store(args.store, &jobs_file)?;
 
-    let base_url = env::var("ZOMBIE_JOBS_BASE_URL").unwrap_or_else(|_| String::from(BASE_URL));
+    let gitlab_base_url = env::var("ZOMBIE_JOBS_BASE_URL").unwrap_or_else(|_| String::from(GITLAB_BASE_URL));
     let max_mages: u32 = env::var("ZOMBIE_JOBS_MAX_PAGES").unwrap_or_else(|_| MAX_PAGES.to_string()).parse().unwrap_or(MAX_PAGES);
     let token = env::var("ZOMBIE_JOBS_TOKEN").ok();
     // from where we look jobs, format should be "%Y-%m-%dTHH:MM:ssZ"
@@ -325,17 +349,19 @@ async fn main() -> Result<(), anyhow::Error> {
     let version_re = Regex::new(r#"docker\.io\/paritytech\/zombienet:(v[0-9].[0-9].[0-9]+)"#).expect("version regex should be valid. qed");
 
 
-    let last_job_id = store.last_id();
-
     let client = reqwest::Client::new();
+
+    // GITLAB
+    let last_job_id = store.last_id(Platform::Gitlab);
+
     // fetch page/s
     let mut next_page = Some(1);
     info!("last stored id: {last_job_id}");
     while next_page.is_some() {
         let page_num = next_page.unwrap(); // SAFETY: we check if some before.
         info!("fetching page {page_num}");
-        let page = fetch_page(
-            &base_url,
+        let page = fetch_gitlab_page(
+            &gitlab_base_url,
             token.clone(),
             &["failed", "success"],
             page_num,
@@ -400,7 +426,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
         }
 
-        store.append(zombienet_jobs)?;
+        store.append(zombienet_jobs, Platform::Gitlab)?;
 
         next_page = if page_num >  max_mages || reach_last_job_stored {
             None
@@ -496,7 +522,7 @@ async fn analyze_job<'a>(job: &'a mut Job, client: &reqwest::Client, re: &Regex)
     Ok(())
 }
 
-async fn fetch_page<T: AsRef<str>>(
+async fn fetch_gitlab_page<T: AsRef<str>>(
     base_url: &str,
     token: Option<String>,
     scopes: &[T],

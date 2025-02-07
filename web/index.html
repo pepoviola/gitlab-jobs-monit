@@ -36,7 +36,7 @@
         for(const test of test_names[0].values) {
             const test_name = test[0];
             if(filter && !test_name.includes(filter)) continue;
-            const jobs = db.exec(`SELECT id, status, created_at, failure_reason, checked_cause from jobs where name = "${test_name}" order by id desc LIMIT ${count}`);
+            const jobs = db.exec(`SELECT gl_job_id, status, created_at, failure_reason, checked_cause from jobs where name = "${test_name}" order by id desc LIMIT ${count}`);
             report[test_name] = {
                 // reverse is `in place`
                 items: jobs[0].values.reverse(),
